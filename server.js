@@ -87,36 +87,46 @@ app.post('/login', (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    const user = results[0];
-    /*
+    let user = results[0];
+    user.password_hash = user.password_hash.slice(0,user.password_hash.length-1);
+    
+
     bcrypt.compare(password, user.password_hash, (err, isMatch) => {
       if (err) {
-        console.error('Bcrypt error:', err);
         return res.status(500).json({ message: 'Internal server error' });
       }
 
       if (!isMatch) {
         return res.status(401).json({ message: 'Invalid credentials' });
       }
-
+      return res.status(200).json({message: 'Succé!'});
+      
       // JWT token
-      const token = jwt.sign(
-        { id: user.id, username: user.username },
-        process.env.JWT_SECRET,
-        { expiresIn: '1h' }
-      );
+     // const token = jwt.sign(
+      //  { id: user.id, username: user.username },
+       // process.env.JWT_SECRET,
+       // { expiresIn: '1h' }
+     // );
 
-      res.status(200).json({ message: 'Login successful', token });
+     // res.status(200).json({ message: 'Login successful', token });
     });
-    */
+    /*
    if (user.password_hash == password) {
     res.status(200).json({ message: 'Login successful' });
    }
    else {
     return res.status(401).json({ message: 'Invalid credentials' });
-   }
+   }*/
   });
 });
+
+// cryptering test
+bcrypt.compare(
+  'test123',
+  '$2b$10$rivVUV7jodRZuNsM07EwGODXvSeOXUe2nZLSsvknFDT52H1zt8pTS',
+  (err, result) => console.log("BCRYPT TEST:", result)
+);
+
 
 // User router
 
