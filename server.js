@@ -1,269 +1,136 @@
 const express = require('express');
-const mysql = require('mysql2');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
+const mysql = require('mysql2/promise');
 const cors = require('cors');
-require('dotenv').config();
+const bcrypt = require('bcryptjs');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
+const PORT = 3000;
 
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Databas
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+const pool = mysql.createPool({
+  host: 'localhost',
+  user: 'root',
+  password: '',
+  database: 'api_db',
+  port: 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-db.connect((err) => {
-  if (err) {
-    console.error('Database connection failed:', err);
-    return;
+async function testConnection() {
+  try {
+    const connection = await pool.getConnection();
+    console.log('✅ MySQL connected successfully');
+    connection.release();
+  } catch (error) {
+    console.error('❌ MySQL connection failed:', error.message);
   }
-  console.log('Connected to MySQL database');
-});
+}
 
-// Verifiera JWT Token
-const verifyToken = (req, res, next) => {
-  const token = req.headers['authorization']?.split(' ')[1]; 
-
-  if (!token) {
-    return res.status(401).json({ message: 'Access token required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ message: 'Invalid or expired token' });
-    }
-    req.user = decoded;
-    next();
-  });
-};
-
-// Routes
-
-// Root route 
 app.get('/', (req, res) => {
-  res.json({
-    message: 'REST API Documentation',
-    version: '1.0.0',
-    routes: {
-      'GET /': 'This documentation',
-      'GET /users': 'Get all users (requires JWT)',
-      'GET /users/:id': 'Get user by ID (requires JWT)',
-      'POST /users': 'Create new user (requires JWT)',
-      'PUT /users/:id': 'Update user by ID (requires JWT)',
-      'POST /login': 'Login and get JWT token'
-    },
-    authentication: 'Use POST /login to get JWT token. Include in header: Authorization: Bearer <token>'
-  });
+  res.type('text/html').status(200).send(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>Users REST API</title><style>body{font-family:Arial;max-width:800px;margin:50px auto;padding:20px;background:#f5f5f5;}h1{color:#333;}ul{list-style:none;padding:0;}li{margin:10px 0;padding:10px;background:white;border-radius:5px;box-shadow:0 2px 5px rgba(0,0,0,0.1);}</style></head>
+    <body>
+      <h1>👤 Users REST API with Login</h1>
+      <ul>
+        <li><strong>GET /users</strong> – List all users (id, username)</li>
+        <li><strong>GET /users/:id</strong> – Single user by ID (no password, 404 if not found)</li>
+        <li><strong>POST /users</strong> – Register: {"username":"newuser","password":"pass123"} → 201</li>
+        <li><strong>POST /login</strong> – Login: {"username":"user1","password":"password123"} → 200 user</li>
+      </ul>
+      <p><em>bcrypt hashed. Test: user1/pass: password123, user2: secret. Port ${PORT}</em></p>
+    </body>
+    </html>
+  `);
 });
 
-// Login route
-app.post('/login', (req, res) => {
-  const username = req.body.username;
-  const password = req.body.password_hash;
-
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username and password required' });
+app.get('/users', async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT id, username, created_at FROM users ORDER BY id DESC');
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
-
-  const query = `SELECT id, username, password_hash FROM users WHERE username = ?`;
-  console.log(query);
-  db.query(query, [username], (err, results) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({ message: 'Internal server error' });
-    }
-
-    console.log(results);
-    console.log(results.length);
-    if (results.length === 0) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    let user = results[0];
-    user.password_hash = user.password_hash.slice(0,user.password_hash.length-1);
-    
-
-    bcrypt.compare(password, user.password_hash, (err, isMatch) => {
-      if (err) {
-        return res.status(500).json({ message: 'Internal server error' });
-      }
-
-      if (!isMatch) {
-        return res.status(401).json({ message: 'Invalid credentials' });
-      }
-      return res.status(200).json({message: 'Succé!'});
-      
-      // JWT token
-     // const token = jwt.sign(
-      //  { id: user.id, username: user.username },
-       // process.env.JWT_SECRET,
-       // { expiresIn: '1h' }
-     // );
-
-     // res.status(200).json({ message: 'Login successful', token });
-    });
-    /*
-   if (user.password_hash == password) {
-    res.status(200).json({ message: 'Login successful' });
-   }
-   else {
-    return res.status(401).json({ message: 'Invalid credentials' });
-   }*/
-  });
 });
 
-// cryptering test
-bcrypt.compare(
-  'test123',
-  '$2b$10$rivVUV7jodRZuNsM07EwGODXvSeOXUe2nZLSsvknFDT52H1zt8pTS',
-  (err, result) => console.log("BCRYPT TEST:", result)
-);
-
-
-// User router
-
-app.get('/users', verifyToken, (req, res) => {
-  const query = 'SELECT id, username, created_at FROM users';
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({ message: 'Internal server error' });
+app.get('/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [rows] = await pool.execute('SELECT id, username, created_at FROM users WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
     }
-    res.status(200).json(results);
-  });
-});
-
-app.get('/users/:id', verifyToken, (req, res) => {
-  const { id } = req.params;
-  const query = 'SELECT id, username, created_at FROM users WHERE id = ?';
-  db.query(query, [id], (err, results) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({ message: 'Internal server error' });
-    }
-    if (results.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-    res.status(200).json(results[0]);
-  });
-});
-
-
-app.post('/users', verifyToken, (req, res) => {
-  const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ message: 'Username, and password required' });
+    res.status(200).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch user' });
   }
-
-  // Lösen
-  bcrypt.hash(password, 10, (err, hash) => {
-    if (err) {
-      console.error('Bcrypt error:', err);
-      return res.status(500).json({ message: 'Internal server error' });
-    }
-
-    const query = 'INSERT INTO users (username, password_hash) VALUES (?, ?, ?)';
-    db.query(query, [username, hash], (err, result) => {
-      if (err) {
-        console.error('Database error:', err);
-        if (err.code === 'ER_DUP_ENTRY') {
-          return res.status(409).json({ message: 'Username already exists' });
-        }
-        return res.status(500).json({ message: 'Internal server error' });
-      }
-
-      const newUser = {
-        id: result.insertId,
-        username,
-        created_at: new Date()
-      };
-
-      res.status(201).json(newUser);
-    });
-  });
 });
 
-
-app.put('/users/:id', verifyToken, (req, res) => {
-  const { id } = req.params;
-  const { username, password } = req.body;
-
-  if (!username && !password) {
-    return res.status(400).json({ message: 'At least one field to update required' });
+app.post('/users', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password || password.length < 6) {
+      return res.status(400).json({ error: 'Username and password (min 6 chars) required' });
+    }
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const [result] = await pool.execute(
+      'INSERT INTO users (username, password) VALUES (?, ?)',
+      [username, hashedPassword]
+    );
+    const [newUser] = await pool.execute('SELECT id, username, created_at FROM users WHERE id = ?', [result.insertId]);
+    res.status(201).json(newUser[0]);
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Username already exists' });
+    }
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create user' });
   }
-
-  // om användare finns
-  const checkQuery = 'SELECT id FROM users WHERE id = ?';
-  db.query(checkQuery, [id], (err, results) => {
-    if (err) {
-      console.error('Database error:', err);
-      return res.status(500).json({ message: 'Internal server error' });
-    }
-
-    if (results.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // Dynamisk uppdatering
-    let updateFields = [];
-    let values = [];
-
-    if (username) {
-      updateFields.push('username = ?');
-      values.push(username);
-    }
- 
-    if (password) {
-      bcrypt.hash(password, 10, (err, hash) => {
-        if (err) {
-          console.error('Bcrypt error:', err);
-          return res.status(500).json({ message: 'Internal server error' });
-        }
-        updateFields.push('password_hash = ?');
-        values.push(hash);
-        executeUpdate();
-      });
-      return; 
-    }
-
-    executeUpdate();
-
-    function executeUpdate() {
-      values.push(id);
-      const query = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
-      db.query(query, values, (err, result) => {
-        if (err) {
-          console.error('Database error:', err);
-          if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ message: 'Username  already exists' });
-          }
-          return res.status(500).json({ message: 'Internal server error' });
-        }
-
-        // Hämta uppdaterad användare
-        const selectQuery = 'SELECT id, username, created_at FROM users WHERE id = ?';
-        db.query(selectQuery, [id], (err, results) => {
-          if (err) {
-            console.error('Database error:', err);
-            return res.status(500).json({ message: 'Internal server error' });
-          }
-          res.status(200).json(results[0]);
-        });
-      });
-    }
-  });
 });
 
-// Starta server
+app.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+    const [rows] = await pool.execute('SELECT * FROM users WHERE username = ?', [username]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const user = rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const { password: _, ...safeUser } = user;
+    res.status(200).json({ message: 'Login successful', user: safeUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+app.use((error, req, res, next) => {
+  console.error(error.stack);
+  res.status(500).json({ error: 'Something went wrong!' });
+});
+
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log('📚 Visit / for documentation');
+  testConnection();
 });
+
