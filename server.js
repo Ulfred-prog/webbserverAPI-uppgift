@@ -83,6 +83,7 @@ app.get('/', (req, res) => {
         <li><span class="badge get">GET</span> <strong>/users</strong> – List all users (id, username)</li>
         <li><span class="badge get">GET</span> <strong>/users/:id</strong> – Single user by ID (404 if not found)</li>
         <li><span class="badge get">GET</span> <strong>/me</strong> – Returns the currently authenticated user's profile</li>
+        <li><span class="badge put" style="background:#fca130;color:white;">PUT</span> <strong>/users/:id</strong> – Update own account: {"username":"newname","password":"newpass"} → 200 + updated user (owner only)</li>
       </ul>
 
       <p><em>Tokens expire after ${JWT_EXPIRES_IN}. Test credentials: user1 / password123, user2 / secret. Port ${PORT}</em></p>
@@ -187,6 +188,64 @@ app.get('/users/:id', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+app.put('/users/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username, password } = req.body;
+
+    if (req.user.id !== parseInt(id)) {
+      return res.status(403).json({ error: 'You can only update your own account.' });
+    }
+
+    const [existing] = await pool.execute('SELECT id FROM users WHERE id = ?', [id]);
+    if (existing.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!username && !password) {
+      return res.status(400).json({ error: 'Provide at least one field to update: username or password' });
+    }
+
+    if (password && password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const fields = [];
+    const values = [];
+
+    if (username) {
+      fields.push('username = ?');
+      values.push(username);
+    }
+
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      fields.push('password = ?');
+      values.push(hashedPassword);
+    }
+
+    values.push(id);
+
+    await pool.execute(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    const [updated] = await pool.execute(
+      'SELECT id, username, created_at FROM users WHERE id = ?',
+      [id]
+    );
+
+    res.status(200).json({ message: 'User updated successfully', user: updated[0] });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Username already exists' });
+    }
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update user' });
   }
 });
 
